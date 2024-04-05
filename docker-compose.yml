@@ -1,0 +1,107 @@
+version: '3.6'
+services:
+
+  # docker-compose up -d
+  # docker-compose down
+
+  traefik:
+    image: "traefik:v2.10"
+    command:
+      - "--log.level=INFO"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - 80:80
+      - 8080:8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  adminer:
+    image: adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: "mariadb"
+      ADMINER_PLUGINS: "tables-filter tinymce edit-calendar edit-foreign"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adminer.rule=PathPrefix(`/adminer`)"
+      - "traefik.http.routers.adminer.entrypoints=web"
+      - "traefik.http.routers.adminer.priority=30"
+
+  mariadb:
+    # local database for local development
+    image: mariadb
+    restart: unless-stopped
+    volumes:
+      - orchid_data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "rootpassword"
+      MYSQL_DATABASE: "dbtest"
+      MYSQL_USER: "otherUser"
+      MYSQL_PASSWORD: "password"
+
+  # the new laravel app 
+  orchid:
+    build:
+      context: orchid/.
+    image: orchid:latest
+    restart: unless-stopped
+    env_file:
+      - common.env # shares env values across docker services
+    environment:
+      APP_NAME: OrchidApp
+      APP_KEY: base64:YUE+07+mLebnlmqfsYO7AMBCGFjMCl8qLm9sjvzJhCI=
+      APP_ENV: local
+      APP_DEBUG: True
+      APP_LOG_LEVEL: debug
+      DB_CONNECTION: mysql
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_USERNAME: root
+      DB_DATABASE: orchid
+      DB_PASSWORD: rootpassword
+      PHP_DEBUGGER: xdebug
+      XDEBUG_MODE: develop,debug
+      XDEBUG_REMOTE_CONNECT_BACK: 1
+      XDEBUG_REMOTE_PORT: 9003
+      XDEBUG_START_WITH_REQUEST: yes
+      XDEBUG_DISCOVER_CLIENT_HOST: yes
+      XDEBUG_CLIENT_HOST: host.docker.internal
+      XDEBUG_REMOTE_AUTOSTART: 1
+    extra_hosts:
+      host.docker.internal: host-gateway
+    volumes:
+      - ./orchid/src/app/Orchid/Resources:/app/app/Orchid/Resources
+      - ./orchid/src/app/Orchid/Screens/Posts:/app/app/Orchid/Screens/Posts
+      - ./orchid/src/app/Models:/app/app/Models
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.orchid.rule=Host(`orchid.localhost`)" # add an entry into your hosts file for this pointing at 127.0.0.1
+      - "traefik.http.routers.orchid.entrypoints=web"
+      - "traefik.http.routers.orchid.priority=10"
+      # orchid doesn't work well out of a sub folder, even with traefik doing it's thing
+      #- "traefik.http.services.orchid.loadbalancer.server.port=80"
+      #- "traefik.http.middlewares.orchid.replacepathregex.regex=^/orchid(.*)"
+      #- "traefik.http.middlewares.orchid.replacepathregex.replacement=$$1"
+      #- "traefik.http.middlewares.orchid.addprefix.prefix=/orchid"
+      #- "traefik.http.routers.orchid.middlewares=orchid"
+
+  metabase:
+    image: metabase/metabase
+    environment:
+      MB_DB_TYPE: "mysql"
+      MB_DB_DBNAME: "metabase"
+      MB_DB_PORT: "3306"
+      MB_DB_USER: "root"
+      MB_DB_PASS: "rootpassword"
+      MB_DB_HOST: "mariadb" # see database above
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.metabase.rule=Host(`metabase.localhost`)"
+      - "traefik.http.routers.metabase.entrypoints=web"
+      - "traefik.http.routers.metabase.priority=20"
+
+volumes:
+  orchid_data:
